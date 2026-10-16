@@ -1,0 +1,34 @@
+# Turns a pushed "publish/vX.Y.Z" branch into a GitHub Release that the
+# Vorantis ERP desktop program updates itself from. The installer is pushed in
+# parts (GitHub's 100 MB per-file limit), joined here, then the branch is removed.
+name: Publish release
+on:
+  push:
+    branches: ["publish/**"]
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Join installer parts and check them
+        run: |
+          set -euo pipefail
+          exe=$(grep '^path:' latest.yml | sed 's/^path: *//')
+          cat "$exe".part-* > "$exe"
+          want=$(grep '^sha512:' latest.yml | sed 's/^sha512: *//')
+          got=$(openssl dgst -sha512 -binary "$exe" | base64 -w0)
+          test "$want" = "$got" || { echo "checksum mismatch"; exit 1; }
+          echo "EXE=$exe" >> "$GITHUB_ENV"
+          echo "VER=$(grep '^version:' latest.yml | sed 's/^version: *//')" >> "$GITHUB_ENV"
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v$VER" "$EXE" "$EXE.blockmap" latest.yml \
+            --repo "$GITHUB_REPOSITORY" --title "Vorantis ERP $VER" --notes-file NOTES.md --target main
+      - name: Remove the upload branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: git push origin --delete "${GITHUB_REF_NAME}"
